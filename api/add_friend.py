@@ -1,18 +1,15 @@
 from flask import Flask, request, jsonify
 import requests
 from byte import Encrypt_ID, encrypt_api
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = Flask(__name__)
 
-@app.route("/add_friend", methods=["GET"])
-def add_friend():
+# نحدد عدد الخيوط المتزامنة (50)
+executor = ThreadPoolExecutor(max_workers=50)
+
+def send_friend_request(token, uid):
     try:
-        token = request.args.get("token")
-        uid = request.args.get("uid")
-
-        if not token or not uid:
-            return jsonify({"error": "Missing token or uid"}), 400
-
         uid = int(uid)
         id_encrypted = Encrypt_ID(uid)
         data0 = "08c8b5cfea1810" + id_encrypted + "18012008"
@@ -32,8 +29,28 @@ def add_friend():
 
         response = requests.post(url, headers=headers, data=data, verify=False)
         if response.status_code == 200:
-            return jsonify({"status": "success", "message": "Friend request sent!"})
+            return {"status": "success", "uid": uid, "message": "Friend request sent!"}
         else:
-            return jsonify({"status": "failed", "code": response.status_code, "response": response.text}), 500
+            return {"status": "failed", "uid": uid, "code": response.status_code, "response": response.text}
+    except Exception as e:
+        return {"status": "error", "uid": uid, "error": str(e)}
+
+@app.route("/add_friend", methods=["POST"])
+def add_friend_batch():
+    try:
+        body = request.json
+        token = body.get("token")
+        uids = body.get("uids")  # الآن نستقبل قائمة UIDs
+
+        if not token or not uids:
+            return jsonify({"error": "Missing token or uids"}), 400
+
+        futures = [executor.submit(send_friend_request, token, uid) for uid in uids]
+        results = [f.result() for f in as_completed(futures)]
+
+        return jsonify({"results": results})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+if __name__ == "__main__":
+    app.run(debug=True)
